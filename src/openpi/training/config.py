@@ -641,8 +641,8 @@ _CONFIGS = [
         name="pi0_ur5",
         model=pi0_fast.Pi0FASTConfig(
             action_dim=8,
-            action_horizon=5,
-            max_token_len=64,
+            action_horizon=10,
+            max_token_len=180,
             paligemma_variant="gemma_2b_lora",
         ),
         data=LeRobotUR5DataConfig(
@@ -652,11 +652,10 @@ _CONFIGS = [
         weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_fast_base/params"),
         num_train_steps=5_000,
         freeze_filter=pi0_fast.Pi0FASTConfig(
-            action_dim=8, action_horizon=5, max_token_len=64, paligemma_variant="gemma_2b_lora"
+            action_dim=8, action_horizon=10, max_token_len=180, paligemma_variant="gemma_2b_lora"
         ).get_freeze_filter(),
         ema_decay=None,
-        batch_size=1,
-        num_workers=0,
+        batch_size=16,
     ),
     #
     # Inference DROID configs.
