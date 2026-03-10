@@ -1,5 +1,46 @@
 # UR5 Example
 
+## Training on `sheilsarda/ur5_isaac_sim_v1`
+
+The actual configs used for this dataset live in:
+- `src/openpi/policies/ur5_policy.py` — `Ur5Inputs` / `Ur5Outputs` transforms
+- `src/openpi/training/config.py` — `LeRobotUR5DataConfig` and `pi0_ur5` TrainConfig
+
+### Model: pi0-FAST LoRA (12GB VRAM)
+
+The `pi0_ur5` config uses **pi0-FAST with LoRA fine-tuning** — required to fit within 12GB VRAM (RTX 4000 Ada). Full pi0 fine-tuning requires ~48GB.
+
+- Base model: `pi0_fast_base` (autoregressive, single transformer — smaller than pi0's diffusion architecture)
+- LoRA: only adapter weights are trained; base model is frozen
+- `action_dim=8`: 6 arm joints padded to 7 + 1 gripper (matches pretrained weight shape); outputs sliced back to 7D at inference
+- `batch_size=2`, `ema_decay=None` (required for LoRA)
+
+### Step 1: Compute normalization stats
+
+Must be run once before training (or after changing the dataset or model config):
+
+```bash
+cd ~/Development/openpi
+uv run scripts/compute_norm_stats.py --config-name=pi0_ur5
+```
+
+Stats are saved to `assets/pi0_ur5/sheilsarda/ur5_isaac_sim_v1/`.
+
+### Step 2: Run training
+
+```bash
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.85 uv run scripts/train.py pi0_ur5 --exp-name ur5_lift_v1 --overwrite
+```
+
+- `XLA_PYTHON_CLIENT_MEM_FRACTION=0.85` — caps JAX GPU memory to 85%, leaving headroom to avoid OOM
+- `--overwrite` deletes the local experiment checkpoint dir (`checkpoints/pi0_ur5/ur5_lift_v1/`) so training starts fresh. It does **not** affect the pretrained GCS weights.
+- Checkpoints are saved to `checkpoints/pi0_ur5/ur5_lift_v1/`.
+- Pretrained weights are loaded from `gs://openpi-assets/checkpoints/pi0_fast_base/params` (downloaded automatically, ~10GB).
+
+
+---
+
+
 Below we provide an outline of how to implement the key components mentioned in the "Finetune on your data" section of the [README](../README.md) for finetuning on UR5 datasets.
 
 First, we will define the `UR5Inputs` and `UR5Outputs` classes, which map the UR5 environment to the model and vice versa. Check the corresponding files in `src/openpi/policies/libero_policy.py` for comments explaining each line.
@@ -135,8 +176,5 @@ TrainConfig(
     num_train_steps=30_000,
 )
 ```
-
-
-
 
 
