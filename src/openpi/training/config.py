@@ -656,6 +656,31 @@ _CONFIGS = [
         ).get_freeze_filter(),
         ema_decay=None,
         batch_size=16,
+        log_interval=500,
+    ),
+    TrainConfig(
+        name="pi0_ur5_base",
+        model=pi0_config.Pi0Config(
+            action_dim=8,
+            action_horizon=10,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotUR5DataConfig(
+            repo_id="sheilsarda/ur5_isaac_sim_v1",
+            base_config=DataConfig(prompt_from_task=True),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        num_train_steps=10_000,
+        freeze_filter=pi0_config.Pi0Config(
+            action_dim=8,
+            action_horizon=10,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        ema_decay=None,
+        batch_size=16,
+        log_interval=500,
     ),
     #
     # Inference DROID configs.
