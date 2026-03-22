@@ -43,15 +43,22 @@ class CheckpointWeightLoader(WeightLoader):
         example: "./checkpoints/<config>/<exp>/<step>/params"
       released checkpoints:
         example: "gs://openpi-assets/checkpoints/<model>/params"
+
+    Args:
+        excluded_prefixes: Flat key prefixes (using "/" as separator) to skip when loading from the
+            checkpoint. Skipped keys fall back to the randomly-initialized reference values. Useful
+            when fine-tuning with a different action_dim than the pretrained checkpoint — e.g.
+            excluded_prefixes=("action_in_proj", "action_out_proj").
     """
 
     params_path: str
+    excluded_prefixes: tuple[str, ...] = ()
 
     def load(self, params: at.Params) -> at.Params:
         # We are loading np.ndarray and relying on the training code to properly convert and shard the params.
         loaded_params = _model.restore_params(download.maybe_download(self.params_path), restore_type=np.ndarray)
         # Add all missing LoRA weights.
-        return _merge_params(loaded_params, params, missing_regex=".*lora.*")
+        return _merge_params(loaded_params, params, missing_regex=".*lora.*", excluded_prefixes=self.excluded_prefixes)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -73,13 +80,21 @@ class PaliGemmaWeightLoader(WeightLoader):
         return _merge_params(loaded_params, params, missing_regex=".*")
 
 
-def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex: str) -> at.Params:
+def _merge_params(
+    loaded_params: at.Params,
+    params: at.Params,
+    *,
+    missing_regex: str,
+    excluded_prefixes: tuple[str, ...] = (),
+) -> at.Params:
     """Merges the loaded parameters with the reference parameters.
 
     Args:
         loaded_params: The parameters to merge.
         params: The reference parameters.
         missing_regex: A regex pattern for all missing keys that should be merged from the reference parameters.
+        excluded_prefixes: Flat key prefixes (using "/" as separator) to skip from loaded_params.
+            Excluded keys fall back to the randomly-initialized reference values.
 
     Returns:
         A new dictionary with the merged parameters.
@@ -87,10 +102,10 @@ def _merge_params(loaded_params: at.Params, params: at.Params, *, missing_regex:
     flat_ref = flax.traverse_util.flatten_dict(params, sep="/")
     flat_loaded = flax.traverse_util.flatten_dict(loaded_params, sep="/")
 
-    # First, take all weights that are a subset of the reference weights.
+    # First, take all weights that are a subset of the reference weights, skipping excluded prefixes.
     result = {}
     for k, v in flat_loaded.items():
-        if k in flat_ref:
+        if k in flat_ref and not any(k.startswith(p) for p in excluded_prefixes):
             result[k] = v.astype(flat_ref[k].dtype) if v.dtype != flat_ref[k].dtype else v
 
     flat_loaded.clear()

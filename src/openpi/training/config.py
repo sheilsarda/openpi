@@ -670,7 +670,12 @@ _CONFIGS = [
             repo_id="sheilsarda/ur5_isaac_sim_v1",
             base_config=DataConfig(prompt_from_task=True),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi0_base/params"),
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "gs://openpi-assets/checkpoints/pi0_base/params",
+            # pi0_base was pretrained with action_dim=32; our UR5 config uses action_dim=8.
+            # Exclude the action projection layers so they are randomly initialized for our action space.
+            excluded_prefixes=("action_in_proj", "action_out_proj"),
+        ),
         num_train_steps=10_000,
         freeze_filter=pi0_config.Pi0Config(
             action_dim=8,
