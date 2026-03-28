@@ -148,11 +148,21 @@ def create_torch_dataset(
     dataset_meta = lerobot_dataset.LeRobotDatasetMetadata(repo_id)
     dataset = lerobot_dataset.LeRobotDataset(
         data_config.repo_id,
-        episodes=episodes,
         delta_timestamps={
             key: [t / dataset_meta.fps for t in range(action_horizon)] for key in data_config.action_sequence_keys
         },
     )
+
+    if episodes is not None:
+        # LeRobotDataset's native `episodes=` param remaps episode_index to [0,1,...] but the
+        # parquet frames still carry original indices, causing out-of-bounds lookups. Use Subset
+        # with explicit frame index ranges instead.
+        indices: list[int] = []
+        for ep_idx in episodes:
+            ep_start = int(dataset.episode_data_index["from"][ep_idx])
+            ep_end = int(dataset.episode_data_index["to"][ep_idx])
+            indices.extend(range(ep_start, ep_end))
+        dataset = torch.utils.data.Subset(dataset, indices)
 
     if data_config.prompt_from_task:
         dataset = TransformedDataset(dataset, [_transforms.PromptFromLeRobotTask(dataset_meta.tasks)])
