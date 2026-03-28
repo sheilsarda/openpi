@@ -129,9 +129,37 @@ class FASTTokenizer:
             self._paligemma_tokenizer.encode(decoded_tokens.split("Action: ")[1].split("|")[0].strip())
         )
         action_tokens = self._act_tokens_to_paligemma_tokens(raw_action_tokens)
-        return self._fast_tokenizer.decode(
-            [action_tokens.tolist()], time_horizon=action_horizon, action_dim=action_dim
-        )[0]
+
+        # Relaxed action decoding (mirrors LeRobot's relaxed_decoding behavior).
+        #
+        # FAST tokenization encodes actions as: action chunk → Discrete Cosine Transform
+        # (DCT) coefficients → quantized characters → Byte Pair Encoding (BPE) compressed
+        # tokens. Decoding reverses this: BPE tokens → characters → DCT coefficients →
+        # inverse DCT → actions.
+        #
+        # The upstream UniversalActionProcessor.decode() does a hard reshape(-1, action_dim)
+        # which crashes when the BPE decompression produces a character count not divisible
+        # by action_dim. We pad/truncate the coefficient array here so approximate token
+        # sequences produce approximate actions instead of falling back to zeros.
+        # Truncation drops high-frequency DCT components (least perceptually important);
+        # zero-padding assumes no high-frequency content. Both are benign approximations.
+        try:
+            bpe_decoded = self._fast_tokenizer.bpe_tokenizer.decode(action_tokens.tolist())
+            dct_coeff = np.array(list(map(ord, bpe_decoded))) + self._fast_tokenizer.min_token
+
+            expected_len = action_horizon * action_dim
+            if dct_coeff.shape[0] > expected_len:
+                dct_coeff = dct_coeff[:expected_len]
+            elif dct_coeff.shape[0] < expected_len:
+                dct_coeff = np.pad(dct_coeff, (0, expected_len - dct_coeff.shape[0]), constant_values=0)
+
+            dct_coeff = dct_coeff.reshape(action_horizon, action_dim).astype(np.float64)
+
+            from scipy.fft import idct
+            return idct(dct_coeff / self._fast_tokenizer.scale, axis=0, norm="ortho").astype(np.float32)
+        except Exception as e:
+            logging.warning(f"FAST action decode failed: {e}")
+            return np.zeros((action_horizon, action_dim), dtype=np.float32)
 
     def _act_tokens_to_paligemma_tokens(self, tokens: np.ndarray | list[int]) -> np.ndarray:
         if isinstance(tokens, list):

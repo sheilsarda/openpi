@@ -154,7 +154,7 @@ def _bag_to_frames(bag_path: Path, typestore, fps: int) -> list[dict] | None:
 def main(args: Args) -> None:
     typestore = get_typestore(Stores.LATEST)
 
-    bag_dirs = sorted(p for p in args.bags_dir.iterdir() if p.is_dir())
+    bag_dirs = sorted(p for p in args.bags_dir.iterdir() if p.is_dir() and (p / "metadata.yaml").exists())
     if not bag_dirs:
         raise ValueError(f"No bag directories found in {args.bags_dir}")
     print(f"Found {len(bag_dirs)} bag(s) in {args.bags_dir}")

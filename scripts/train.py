@@ -11,6 +11,7 @@ import flax.traverse_util as traverse_util
 import jax
 import jax.experimental
 import jax.numpy as jnp
+import lerobot.common.datasets.lerobot_dataset as lerobot_dataset
 import numpy as np
 import optax
 import tqdm_loggable.auto as tqdm
@@ -191,6 +192,22 @@ def train_step(
     return new_state, info
 
 
+@at.typecheck
+def eval_step(
+    config: _config.TrainConfig,
+    rng: at.KeyArrayLike,
+    state: training_utils.TrainState,
+    batch: tuple[_model.Observation, _model.Actions],
+) -> dict[str, at.Array]:
+    """Compute eval loss on a held-out batch without updating parameters."""
+    model = nnx.merge(state.model_def, state.params)
+    model.eval()
+    eval_rng = jax.random.fold_in(rng, state.step)
+    observation, actions = batch
+    chunked_loss = model.compute_loss(eval_rng, observation, actions, train=False)
+    return {"eval/loss": jnp.mean(chunked_loss)}
+
+
 def main(config: _config.TrainConfig):
     init_logging()
     logging.info(f"Running on: {platform.node()}")
@@ -217,12 +234,31 @@ def main(config: _config.TrainConfig):
     )
     init_wandb(config, resuming=resuming, enabled=config.wandb_enabled)
 
+    # Compute train/eval episode split when eval_episodes is configured.
+    train_episodes = None
+    eval_data_loader = None
+    if config.eval_episodes:
+        data_config_obj = config.data.create(config.assets_dirs, config.model)
+        if data_config_obj.repo_id and data_config_obj.repo_id != "fake":
+            total_eps = lerobot_dataset.LeRobotDatasetMetadata(data_config_obj.repo_id).total_episodes
+            eval_set = set(config.eval_episodes)
+            train_episodes = [e for e in range(total_eps) if e not in eval_set]
+            logging.info(f"Train episodes: {train_episodes}  |  Eval episodes: {config.eval_episodes}")
+            eval_data_loader = _data_loader.create_data_loader(
+                config,
+                sharding=data_sharding,
+                shuffle=False,
+                episodes=config.eval_episodes,
+            )
+
     data_loader = _data_loader.create_data_loader(
         config,
         sharding=data_sharding,
         shuffle=True,
+        episodes=train_episodes,
     )
     data_iter = iter(data_loader)
+    eval_data_iter = iter(eval_data_loader) if eval_data_loader is not None else None
     batch = next(data_iter)
     logging.info(f"Initialized data loader:\n{training_utils.array_tree_to_info(batch)}")
 
@@ -246,6 +282,12 @@ def main(config: _config.TrainConfig):
         out_shardings=(train_state_sharding, replicated_sharding),
         donate_argnums=(1,),
     )
+
+    peval_step = jax.jit(
+        functools.partial(eval_step, config),
+        in_shardings=(replicated_sharding, train_state_sharding, data_sharding),
+        out_shardings=replicated_sharding,
+    ) if eval_data_iter is not None else None
 
     start_step = int(train_state.step)
     pbar = tqdm.tqdm(
@@ -271,6 +313,12 @@ def main(config: _config.TrainConfig):
 
         if (step % config.save_interval == 0 and step > start_step) or step == config.num_train_steps - 1:
             _checkpoints.save_state(checkpoint_manager, train_state, data_loader, step)
+
+            if peval_step is not None:
+                eval_batch = next(eval_data_iter)
+                eval_info = jax.device_get(peval_step(train_rng, train_state, eval_batch))
+                pbar.write(f"Step {step} eval: loss={eval_info['eval/loss']:.4f}")
+                wandb.log(eval_info, step=step)
 
     logging.info("Waiting for checkpoint manager to finish")
     checkpoint_manager.wait_until_finished()

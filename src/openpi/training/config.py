@@ -553,6 +553,9 @@ class TrainConfig:
     log_interval: int = 100
     # How often (in steps) to save checkpoints.
     save_interval: int = 1000
+    # Episodes (0-indexed) to hold out for eval. Excluded from training data; eval loss is
+    # computed and logged to W&B every save_interval steps. Empty list disables eval.
+    eval_episodes: list[int] = dataclasses.field(default_factory=list)
     # If set, any existing checkpoints matching step % keep_period == 0 will not be deleted.
     keep_period: int | None = 5000
 
@@ -657,6 +660,7 @@ _CONFIGS = [
         ema_decay=None,
         batch_size=16,
         log_interval=500,
+        eval_episodes=[9],
     ),
     TrainConfig(
         name="pi0_ur5_base",
